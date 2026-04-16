@@ -9,6 +9,8 @@ yarn-error.log*
 lerna-debug.log*
 qdrant_storage
 
+# DB2 test files (contain credentials)
+test_db2_connection.py
 .dspy_cache
 # Mac
 .DS_Store

@@ -53,9 +53,10 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
         ),
         StrInput(
             name="collection_name",
-            display_name="Collection Name",
+            display_name="Table Name",
+            value="LANGFLOW_VECTORS",
             required=True,
-            info="Name of the vector collection/table",
+            info="Name of the DB2 table to store vectors (will be created if it doesn't exist)",
         ),
         HandleInput(
             name="embedding",
@@ -67,9 +68,9 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
         HandleInput(
             name="ingest_data",
             display_name="Ingest Data",
-            input_types=["Data"],
+            input_types=["Data", "Document", "Message", "Text", "Table"],
             is_list=True,
-            info="Documents to ingest into the vector store (connect from text splitters or file loaders)",
+            info="Documents to ingest into the vector store (accepts Data, Documents, Messages, Tables, JSON, or text)",
         ),
         StrInput(
             name="search_query",
@@ -92,7 +93,7 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
         DropdownInput(
             name="distance_strategy",
             display_name="Distance Strategy",
-            options=["COSINE", "EUCLIDEAN", "DOT_PRODUCT"],
+            options=["COSINE", "EUCLIDEAN_DISTANCE", "DOT_PRODUCT"],
             value="COSINE",
             info="Distance calculation strategy",
         ),
@@ -124,29 +125,73 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
         # Map distance strategy
         distance_strategy_map = {
             "COSINE": DistanceStrategy.COSINE,
-            "EUCLIDEAN": DistanceStrategy.EUCLIDEAN,
+            "EUCLIDEAN_DISTANCE": DistanceStrategy.EUCLIDEAN_DISTANCE,
             "DOT_PRODUCT": DistanceStrategy.DOT_PRODUCT,
         }
 
         # Build vector store
         vector_store = DB2VS(
-            connection=connection,
-            embedding=self.embedding,
-            collection_name=self.collection_name,
+            client=connection,
+            embedding_function=self.embedding,
+            table_name=self.collection_name,
             distance_strategy=distance_strategy_map.get(self.distance_strategy, DistanceStrategy.COSINE),
         )
 
         # Add documents if provided
         if self.ingest_data:
             from langchain_core.documents import Document
+            import json
+            import pandas as pd
 
             documents = []
             for data in self.ingest_data:
                 if isinstance(data, Data):
                     doc = data.to_lc_document()
+                    # Ensure metadata is a simple dict
+                    doc.metadata = {}
                     documents.append(doc)
                 elif isinstance(data, Document):
+                    # Clear metadata to avoid serialization issues
+                    data.metadata = {}
                     documents.append(data)
+                elif isinstance(data, pd.DataFrame):
+                    # Handle pandas DataFrame - convert each row to a document
+                    for _, row in data.iterrows():
+                        text_parts = []
+                        for val in row.values:
+                            try:
+                                if pd.notna(val):
+                                    text_parts.append(str(val))
+                            except (ValueError, TypeError):
+                                # Handle arrays or other non-scalar values
+                                text_parts.append(str(val))
+                        text = ' '.join(text_parts)
+                        doc = Document(page_content=text, metadata={})
+                        documents.append(doc)
+                elif isinstance(data, pd.Series):
+                    # Handle pandas Series - convert each value to a document
+                    for val in data:
+                        try:
+                            if pd.notna(val):
+                                doc = Document(page_content=str(val), metadata={})
+                                documents.append(doc)
+                        except (ValueError, TypeError):
+                            # Handle arrays or other non-scalar values
+                            doc = Document(page_content=str(val), metadata={})
+                            documents.append(doc)
+                elif isinstance(data, dict):
+                    # Handle JSON/dict objects
+                    text = json.dumps(data) if not isinstance(data.get('text'), str) else data.get('text', json.dumps(data))
+                    doc = Document(page_content=text, metadata={})
+                    documents.append(doc)
+                elif hasattr(data, 'text'):
+                    # Handle Message or any object with text attribute
+                    doc = Document(page_content=data.text, metadata={})
+                    documents.append(doc)
+                elif isinstance(data, str):
+                    # Handle plain strings
+                    doc = Document(page_content=data, metadata={})
+                    documents.append(doc)
 
             if documents:
                 vector_store.add_documents(documents)
@@ -174,10 +219,9 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
         return docs_to_data(docs)
 
     def build(self) -> DB2VS | list[Data]:
-        """Build the component - returns vector store or search results."""
+        """Build the component and return either the vector store or search results."""
         if self.search_query:
             return self.search_documents()
         return self.build_vector_store()
-
 
 # Made with Bob
