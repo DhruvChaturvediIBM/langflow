@@ -66,10 +66,10 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
         ),
         HandleInput(
             name="ingest_data",
-            display_name="Documents",
+            display_name="Ingest Data",
             input_types=["Data"],
             is_list=True,
-            info="Documents to add to the vector store",
+            info="Documents to ingest into the vector store (connect from text splitters or file loaders)",
         ),
         StrInput(
             name="search_query",
