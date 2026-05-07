@@ -14,7 +14,7 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
     """IBM Db2 Vector Store with search capabilities."""
 
     display_name: str = "IBM Db2 Vector Store"
-    description: str = "IBM Db2 Vector Store with similarity search capabilities"
+    description: str = "IBM Db2 Vector Store with hybrid SQL-backed vector retrieval capabilities"
     documentation: str = "https://www.ibm.com/docs/en/db2/11.5"
     name = "DB2VectorStore"
     icon = "DB2"
