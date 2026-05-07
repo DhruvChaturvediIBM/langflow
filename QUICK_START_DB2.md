@@ -71,11 +71,14 @@ Open browser: `http://localhost:3000`
 3. **Configure Connection** (same as SQL)
 4. **Add:**
    - Table Name: `langflow_vectors`
-   - Distance Strategy: `EUCLIDEAN`
-   - Embedding Model: Connect OpenAI Embeddings
-5. **Ingest or Search:**
-   - Ingest: Connect File/Text → Component
-   - Search: Enter query in "Search Query"
+   - Distance Strategy: `COSINE`
+   - Embedding Model: Connect an embeddings node
+5. **Use it in two ways:**
+   - Ingest: Connect File/Text/Data/Table → component using the ingest input
+   - Search: Enter query in "Search Query" or connect another node to it
+6. **Optional SQL alongside vector flow:**
+   - Use [`DB2 SQL`](langflow/src/lfx/src/lfx/components/db2/db2_sql.py:11) as a separate node when you want exact SQL execution in the same flow
+   - Keep [`DB2 Vector Store`](langflow/src/lfx/src/lfx/components/db2/db2_vector.py:13) for embedding-based ingestion and semantic retrieval
 
 ## Example Flow: RAG with DB2
 
@@ -123,6 +126,18 @@ Open browser: `http://localhost:3000`
 │ Chat Output  │
 └──────────────┘
 ```
+
+## Optional SQL + Vector Flow
+
+```text
+Chat Input ───────────────► DB2 Vector Store ───────► Chat Output
+              query              semantic results
+
+SQL Text/Input ───────────► DB2 SQL ────────────────► downstream node
+                           exact SQL results
+```
+
+Use [`DB2 Vector Store`](langflow/src/lfx/src/lfx/components/db2/db2_vector.py:13) for semantic retrieval and [`DB2 SQL`](langflow/src/lfx/src/lfx/components/db2/db2_sql.py:11) when you want exact SQL queries in the same project.
 
 ## How It Works
 

@@ -72,10 +72,12 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
             is_list=True,
             info="Documents to ingest into the vector store (accepts Data, Documents, Messages, Tables, JSON, or text)",
         ),
-        StrInput(
+        HandleInput(
             name="search_query",
             display_name="Search Query",
-            info="Query text for similarity search",
+            input_types=["Message", "Text", "Data"],
+            required=False,
+            info="Query text for similarity search (can be connected from other nodes or typed directly)",
         ),
         IntInput(
             name="number_of_results",
@@ -109,6 +111,17 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
     @check_cached_vector_store
     def build_vector_store(self) -> DB2VS:
         """Build and return the DB2 vector store instance."""
+        # Validate inputs first
+        if not self.database or not self.hostname or not self.username or not self.password:
+            msg = (
+                "Missing required connection parameters. Please provide:\n"
+                "- Database Name\n"
+                "- Hostname\n"
+                "- Username\n"
+                "- Password"
+            )
+            raise ValueError(msg)
+
         # Create connection string
         conn_str = (
             f"DATABASE={self.database};"
@@ -119,8 +132,61 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
             f"PWD={self.password};"
         )
 
-        # Create connection
-        connection = ibm_db_dbi.connect(conn_str, "", "")
+        # Create connection with better error handling
+        try:
+            connection = ibm_db_dbi.connect(conn_str, "", "")
+        except Exception as e:
+            error_msg = str(e)
+
+            # Provide helpful error messages
+            if "SQL30081N" in error_msg or "communication error" in error_msg.lower():
+                msg = (
+                    f"❌ Cannot connect to DB2 server at {self.hostname}:{self.port}\n\n"
+                    f"Possible causes:\n"
+                    f"1. DB2 server is not running\n"
+                    f"2. Hostname/IP is incorrect (current: {self.hostname})\n"
+                    f"3. Port is incorrect (current: {self.port})\n"
+                    f"4. Firewall blocking connection\n"
+                    f"5. Network connectivity issue\n\n"
+                    f"To test connection, run:\n"
+                    f"  telnet {self.hostname} {self.port}\n"
+                    f"  or: nc -zv {self.hostname} {self.port}\n\n"
+                    f"Original error: {error_msg}"
+                )
+                raise ConnectionError(msg) from e
+            if "SQL1336N" in error_msg or "not found" in error_msg.lower():
+                msg = (
+                    f"❌ Cannot resolve hostname: {self.hostname}\n\n"
+                    f"Possible causes:\n"
+                    f"1. Hostname is misspelled\n"
+                    f"2. DNS cannot resolve the hostname\n"
+                    f"3. Use IP address instead of hostname\n\n"
+                    f"Try using:\n"
+                    f"  - localhost (if DB2 is on same machine)\n"
+                    f"  - 127.0.0.1 (if DB2 is on same machine)\n"
+                    f"  - Actual IP address of DB2 server\n\n"
+                    f"Original error: {error_msg}"
+                )
+                raise ConnectionError(msg) from e
+            if "SQL30082N" in error_msg or "security" in error_msg.lower():
+                msg = (
+                    f"❌ Authentication failed\n\n"
+                    f"Possible causes:\n"
+                    f"1. Username is incorrect (current: {self.username})\n"
+                    f"2. Password is incorrect\n"
+                    f"3. User doesn't have access to database: {self.database}\n\n"
+                    f"Original error: {error_msg}"
+                )
+                raise ConnectionError(msg) from e
+            msg = (
+                f"❌ DB2 Connection Error\n\n"
+                f"Database: {self.database}\n"
+                f"Hostname: {self.hostname}\n"
+                f"Port: {self.port}\n"
+                f"Username: {self.username}\n\n"
+                f"Error: {error_msg}"
+            )
+            raise ConnectionError(msg) from e
 
         # Map distance strategy
         distance_strategy_map = {
@@ -129,74 +195,109 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
             "DOT_PRODUCT": DistanceStrategy.DOT_PRODUCT,
         }
 
-        # Build vector store
-        vector_store = DB2VS(
-            client=connection,
-            embedding_function=self.embedding,
-            table_name=self.collection_name,
-            distance_strategy=distance_strategy_map.get(self.distance_strategy, DistanceStrategy.COSINE),
-        )
+        try:
+            # Build vector store
+            vector_store = DB2VS(
+                client=connection,
+                embedding_function=self.embedding,
+                table_name=self.collection_name,
+                distance_strategy=distance_strategy_map.get(self.distance_strategy, DistanceStrategy.COSINE),
+            )
 
-        # Add documents if provided
-        if self.ingest_data:
-            from langchain_core.documents import Document
-            import json
-            import pandas as pd
+            # Add documents if provided
+            if self.ingest_data:
+                import json
 
-            documents = []
-            for data in self.ingest_data:
-                if isinstance(data, Data):
-                    doc = data.to_lc_document()
-                    # Ensure metadata is a simple dict
-                    doc.metadata = {}
-                    documents.append(doc)
-                elif isinstance(data, Document):
-                    # Clear metadata to avoid serialization issues
-                    data.metadata = {}
-                    documents.append(data)
-                elif isinstance(data, pd.DataFrame):
-                    # Handle pandas DataFrame - convert each row to a document
-                    for _, row in data.iterrows():
-                        text_parts = []
-                        for val in row.values:
+                import pandas as pd
+                from langchain_core.documents import Document
+
+                documents = []
+                for data in self.ingest_data:
+                    if isinstance(data, Data):
+                        doc = data.to_lc_document()
+                        # Ensure metadata is a simple dict
+                        doc.metadata = {}
+                        documents.append(doc)
+                    elif isinstance(data, Document):
+                        # Clear metadata to avoid serialization issues
+                        data.metadata = {}
+                        documents.append(data)
+                    elif isinstance(data, pd.DataFrame):
+                        # Handle pandas DataFrame - convert each row to a document
+                        for _, row in data.iterrows():
+                            text_parts = []
+                            for val in row.to_numpy():
+                                try:
+                                    if pd.notna(val):
+                                        text_parts.append(str(val))
+                                except (ValueError, TypeError):
+                                    # Handle arrays or other non-scalar values
+                                    text_parts.append(str(val))
+                            text = " ".join(text_parts)
+                            doc = Document(page_content=text, metadata={})
+                            documents.append(doc)
+                    elif isinstance(data, pd.Series):
+                        # Handle pandas Series - convert each value to a document
+                        for val in data:
                             try:
                                 if pd.notna(val):
-                                    text_parts.append(str(val))
+                                    doc = Document(page_content=str(val), metadata={})
+                                    documents.append(doc)
                             except (ValueError, TypeError):
                                 # Handle arrays or other non-scalar values
-                                text_parts.append(str(val))
-                        text = ' '.join(text_parts)
-                        doc = Document(page_content=text, metadata={})
-                        documents.append(doc)
-                elif isinstance(data, pd.Series):
-                    # Handle pandas Series - convert each value to a document
-                    for val in data:
-                        try:
-                            if pd.notna(val):
                                 doc = Document(page_content=str(val), metadata={})
                                 documents.append(doc)
-                        except (ValueError, TypeError):
-                            # Handle arrays or other non-scalar values
-                            doc = Document(page_content=str(val), metadata={})
-                            documents.append(doc)
-                elif isinstance(data, dict):
-                    # Handle JSON/dict objects
-                    text = json.dumps(data) if not isinstance(data.get('text'), str) else data.get('text', json.dumps(data))
-                    doc = Document(page_content=text, metadata={})
-                    documents.append(doc)
-                elif hasattr(data, 'text'):
-                    # Handle Message or any object with text attribute
-                    doc = Document(page_content=data.text, metadata={})
-                    documents.append(doc)
-                elif isinstance(data, str):
-                    # Handle plain strings
-                    doc = Document(page_content=data, metadata={})
-                    documents.append(doc)
+                    elif isinstance(data, dict):
+                        # Handle JSON/dict objects
+                        text = (
+                            json.dumps(data)
+                            if not isinstance(data.get("text"), str)
+                            else data.get("text", json.dumps(data))
+                        )
+                        doc = Document(page_content=text, metadata={})
+                        documents.append(doc)
+                    elif hasattr(data, "text"):
+                        # Handle Message or any object with text attribute
+                        doc = Document(page_content=data.text, metadata={})
+                        documents.append(doc)
+                    elif isinstance(data, str):
+                        # Handle plain strings
+                        doc = Document(page_content=data, metadata={})
+                        documents.append(doc)
 
-            if documents:
-                vector_store.add_documents(documents)
+                if documents:
+                    try:
+                        vector_store.add_documents(documents)
+                    except ValueError as e:
+                        error_msg = str(e)
+                        if "dimension mismatch" in error_msg.lower():
+                            # Provide clear guidance on dimension mismatch
+                            msg = (
+                                f"Embedding dimension mismatch detected. {error_msg}\n\n"
+                                f"To fix this issue:\n"
+                                f"1. Drop the existing table: DROP TABLE {self.collection_name};\n"
+                                f"2. Or use a different table name\n"
+                                f"3. Or ensure your embedding model produces the same dimension as the table"
+                            )
+                            raise ValueError(msg) from e
+                        raise
+                    except RuntimeError as e:
+                        error_msg = str(e)
+                        if "VECTOR" in error_msg and "cannot be CAST" in error_msg:
+                            # DB2 vector dimension mismatch error
+                            msg = (
+                                f"DB2 vector dimension mismatch: {error_msg}\n\n"
+                                f"The table '{self.collection_name}' was created with a different vector dimension.\n"
+                                f"To fix: DROP TABLE {self.collection_name}; and try again."
+                            )
+                            raise ValueError(msg) from e
+                        raise
+                return vector_store
 
-        return vector_store
+        except Exception:
+            # Ensure connection is closed on error
+            connection.close()
+            raise
 
     def search_documents(self) -> list[Data]:
         """Perform similarity search and return results."""
@@ -205,14 +306,26 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
         if not self.search_query:
             return []
 
+        # Extract text from search_query (handle Message, Data, or string)
+        query_text = self.search_query
+        if hasattr(self.search_query, "text"):
+            # Handle Message objects
+            query_text = self.search_query.text
+        elif isinstance(self.search_query, Data):
+            # Handle Data objects
+            query_text = self.search_query.text_data
+        elif not isinstance(self.search_query, str):
+            # Convert any other type to string
+            query_text = str(self.search_query)
+
         if self.search_type == "Similarity":
             docs = vector_store.similarity_search(
-                query=self.search_query,
+                query=query_text,
                 k=self.number_of_results,
             )
         else:  # MMR
             docs = vector_store.max_marginal_relevance_search(
-                query=self.search_query,
+                query=query_text,
                 k=self.number_of_results,
             )
 
@@ -223,5 +336,6 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
         if self.search_query:
             return self.search_documents()
         return self.build_vector_store()
+
 
 # Made with Bob
