@@ -452,29 +452,30 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
             # Parse filter key for operators
             if key.endswith("_lt"):
                 field = key[:-3]
-                # Use JSON_VALUE to extract field from metadata JSON
-                where_clauses.append(f"CAST(JSON_VALUE({metadata_col}, '$.{field}') AS DECIMAL(10,2)) < ?")
-                params.append(value)
+                # Use DOUBLE for numeric comparisons to avoid CLOB->DECIMAL cast error
+                where_clauses.append(f"CAST(JSON_VALUE({metadata_col}, '$.{field}') AS DOUBLE) < ?")
+                params.append(float(value))
             elif key.endswith("_lte"):
                 field = key[:-4]
-                where_clauses.append(f"CAST(JSON_VALUE({metadata_col}, '$.{field}') AS DECIMAL(10,2)) <= ?")
-                params.append(value)
+                where_clauses.append(f"CAST(JSON_VALUE({metadata_col}, '$.{field}') AS DOUBLE) <= ?")
+                params.append(float(value))
             elif key.endswith("_gt"):
                 field = key[:-3]
-                where_clauses.append(f"CAST(JSON_VALUE({metadata_col}, '$.{field}') AS DECIMAL(10,2)) > ?")
-                params.append(value)
+                where_clauses.append(f"CAST(JSON_VALUE({metadata_col}, '$.{field}') AS DOUBLE) > ?")
+                params.append(float(value))
             elif key.endswith("_gte"):
                 field = key[:-4]
-                where_clauses.append(f"CAST(JSON_VALUE({metadata_col}, '$.{field}') AS DECIMAL(10,2)) >= ?")
-                params.append(value)
+                where_clauses.append(f"CAST(JSON_VALUE({metadata_col}, '$.{field}') AS DOUBLE) >= ?")
+                params.append(float(value))
+            # Default to equality - handle both string and numeric values
+            elif isinstance(value, (int, float)):
+                # For numeric equality, use DOUBLE cast
+                where_clauses.append(f"CAST(JSON_VALUE({metadata_col}, '$.{key}') AS DOUBLE) = ?")
+                params.append(float(value))
             else:
-                # Default to equality - handle both string and numeric values
-                # For strings, use direct comparison; for numbers, cast to decimal
-                if isinstance(value, (int, float)):
-                    where_clauses.append(f"CAST(JSON_VALUE({metadata_col}, '$.{key}') AS DECIMAL(10,2)) = ?")
-                else:
-                    where_clauses.append(f"JSON_VALUE({metadata_col}, '$.{key}') = ?")
-                params.append(value)
+                # For string equality, use direct comparison
+                where_clauses.append(f"JSON_VALUE({metadata_col}, '$.{key}') = ?")
+                params.append(str(value))
 
         where_sql = " AND ".join(where_clauses)
         return where_sql, params
