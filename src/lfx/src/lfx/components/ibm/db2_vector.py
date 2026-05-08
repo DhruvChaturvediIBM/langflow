@@ -5,7 +5,7 @@ from langchain_community.vectorstores.utils import DistanceStrategy
 from langchain_core.embeddings import Embeddings
 from langchain_db2.db2vs import DB2VS
 
-from lfx.base.vectorstores.model import LCVectorStoreComponent, check_cached_vector_store
+from lfx.base.vectorstores.model import LCVectorStoreComponent
 from lfx.helpers.data import docs_to_data
 from lfx.inputs.inputs import BoolInput, DropdownInput, HandleInput, IntInput, SecretStrInput, StrInput
 from lfx.schema.data import Data
@@ -123,7 +123,6 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
         ),
     ]
 
-    @check_cached_vector_store
     def build_vector_store(self) -> DB2VS:
         """Build and return the DB2 vector store instance."""
         self.log("=" * 60)
