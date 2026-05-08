@@ -411,11 +411,12 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
 
         return vector_store
 
-    def _build_filter_clause(self, filters: dict) -> tuple[str, list]:
-        """Build SQL WHERE clause from metadata filters.
+    def _build_filter_clause(self, filters: dict, column_names: dict) -> tuple[str, list]:
+        """Build SQL WHERE clause from metadata filters using JSON path expressions.
 
         Args:
             filters: Dictionary of filter conditions
+            column_names: Column name mapping from DB2VS
 
         Returns:
             Tuple of (WHERE clause string, list of parameter values)
@@ -426,34 +427,42 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
             - field_name_lte: value (less than or equal)
             - field_name_gt: value (greater than)
             - field_name_gte: value (greater than or equal)
+
+        Note: Filters are applied to JSON fields within the metadata column using JSON_VALUE
         """
         if not filters:
             return "", []
 
         where_clauses = []
         params = []
+        metadata_col = column_names.get("metadata", '"metadata"')
 
         for key, value in filters.items():
             # Parse filter key for operators
             if key.endswith("_lt"):
                 field = key[:-3]
-                where_clauses.append(f"{field} < ?")
+                # Use JSON_VALUE to extract field from metadata JSON
+                where_clauses.append(f"CAST(JSON_VALUE({metadata_col}, '$.{field}') AS DECIMAL(10,2)) < ?")
                 params.append(value)
             elif key.endswith("_lte"):
                 field = key[:-4]
-                where_clauses.append(f"{field} <= ?")
+                where_clauses.append(f"CAST(JSON_VALUE({metadata_col}, '$.{field}') AS DECIMAL(10,2)) <= ?")
                 params.append(value)
             elif key.endswith("_gt"):
                 field = key[:-3]
-                where_clauses.append(f"{field} > ?")
+                where_clauses.append(f"CAST(JSON_VALUE({metadata_col}, '$.{field}') AS DECIMAL(10,2)) > ?")
                 params.append(value)
             elif key.endswith("_gte"):
                 field = key[:-4]
-                where_clauses.append(f"{field} >= ?")
+                where_clauses.append(f"CAST(JSON_VALUE({metadata_col}, '$.{field}') AS DECIMAL(10,2)) >= ?")
                 params.append(value)
             else:
-                # Default to equality
-                where_clauses.append(f"{key} = ?")
+                # Default to equality - handle both string and numeric values
+                # For strings, use direct comparison; for numbers, cast to decimal
+                if isinstance(value, (int, float)):
+                    where_clauses.append(f"CAST(JSON_VALUE({metadata_col}, '$.{key}') AS DECIMAL(10,2)) = ?")
+                else:
+                    where_clauses.append(f"JSON_VALUE({metadata_col}, '$.{key}') = ?")
                 params.append(value)
 
         where_sql = " AND ".join(where_clauses)
@@ -478,6 +487,10 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
         vector_store = self.build_vector_store()
         connection = vector_store.client
 
+        # Get column names from vector store
+        column_names = vector_store.column_names
+        self.log(f"Using column names: {column_names}")
+
         # Generate query embedding
         self.log(f"Generating embedding for query: {query_text[:50]}...")
         # Use the public embedding function instead of private method
@@ -488,7 +501,7 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
         embedding_dim = len(query_embedding)
 
         # Build WHERE clause from filters
-        where_sql, filter_params = self._build_filter_clause(filters)
+        where_sql, filter_params = self._build_filter_clause(filters, column_names)
 
         if where_sql:
             self.log(f"Generated WHERE clause: {where_sql}")
@@ -506,10 +519,6 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
 
         # Build SQL query
         # Note: column_names are validated by DB2VS, not user input
-        column_names = vector_store.column_names
-
-        # Log the column names for debugging
-        self.log(f"Using column names: {column_names}")
 
         # S608: column_names from DB2VS are validated, not direct user input
         # Column names already include quotes if needed (e.g., "text" or TEXT)
