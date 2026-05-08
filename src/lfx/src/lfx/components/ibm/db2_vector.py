@@ -239,8 +239,10 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
                 import pandas as pd
                 from langchain_core.documents import Document
 
+                self.log(f"📥 Starting data ingestion... ({len(self.ingest_data)} data items)")
                 documents = []
-                for data in self.ingest_data:
+                for idx, data in enumerate(self.ingest_data):
+                    self.log(f"Processing data item {idx + 1}/{len(self.ingest_data)}: {type(data).__name__}")
                     if isinstance(data, Data):
                         doc = data.to_lc_document()
                         # Preserve metadata for hybrid retrieval
@@ -321,8 +323,13 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
                         documents.append(doc)
 
                 if documents:
+                    self.log(f"📝 Prepared {len(documents)} documents for ingestion")
+                    self.log("Sample document metadata: " + str(documents[0].metadata if documents else {}))
+
                     try:
+                        self.log(f"🔄 Adding {len(documents)} documents to DB2 table '{self.collection_name}'...")
                         vector_store.add_documents(documents)
+                        self.log(f"✅ Successfully ingested {len(documents)} documents into DB2!")
                     except ValueError as e:
                         error_msg = str(e)
                         if "dimension mismatch" in error_msg.lower():
@@ -347,6 +354,8 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
                             )
                             raise ValueError(msg) from e
                         raise
+                else:
+                    self.log("⚠️ No documents to add - ingest_data was empty or could not be processed")
         except Exception:
             # Ensure connection is closed on error
             connection.close()
