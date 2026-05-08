@@ -452,25 +452,33 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
             # Parse filter key for operators
             if key.endswith("_lt"):
                 field = key[:-3]
-                # Use DOUBLE for numeric comparisons to avoid CLOB->DECIMAL cast error
-                where_clauses.append(f"CAST(JSON_VALUE({metadata_col}, '$.{field}') AS DOUBLE) < ?")
+                # Cast to VARCHAR first, then to DOUBLE to avoid CLOB->DOUBLE error
+                where_clauses.append(
+                    f"CAST(CAST(JSON_VALUE({metadata_col}, '$.{field}') AS VARCHAR(100)) AS DOUBLE) < ?"
+                )
                 params.append(float(value))
             elif key.endswith("_lte"):
                 field = key[:-4]
-                where_clauses.append(f"CAST(JSON_VALUE({metadata_col}, '$.{field}') AS DOUBLE) <= ?")
+                where_clauses.append(
+                    f"CAST(CAST(JSON_VALUE({metadata_col}, '$.{field}') AS VARCHAR(100)) AS DOUBLE) <= ?"
+                )
                 params.append(float(value))
             elif key.endswith("_gt"):
                 field = key[:-3]
-                where_clauses.append(f"CAST(JSON_VALUE({metadata_col}, '$.{field}') AS DOUBLE) > ?")
+                where_clauses.append(
+                    f"CAST(CAST(JSON_VALUE({metadata_col}, '$.{field}') AS VARCHAR(100)) AS DOUBLE) > ?"
+                )
                 params.append(float(value))
             elif key.endswith("_gte"):
                 field = key[:-4]
-                where_clauses.append(f"CAST(JSON_VALUE({metadata_col}, '$.{field}') AS DOUBLE) >= ?")
+                where_clauses.append(
+                    f"CAST(CAST(JSON_VALUE({metadata_col}, '$.{field}') AS VARCHAR(100)) AS DOUBLE) >= ?"
+                )
                 params.append(float(value))
             # Default to equality - handle both string and numeric values
             elif isinstance(value, (int, float)):
-                # For numeric equality, use DOUBLE cast
-                where_clauses.append(f"CAST(JSON_VALUE({metadata_col}, '$.{key}') AS DOUBLE) = ?")
+                # For numeric equality, cast VARCHAR first then DOUBLE
+                where_clauses.append(f"CAST(CAST(JSON_VALUE({metadata_col}, '$.{key}') AS VARCHAR(100)) AS DOUBLE) = ?")
                 params.append(float(value))
             else:
                 # For string equality, use direct comparison
