@@ -2,6 +2,7 @@
 
 import ibm_db_dbi
 from langchain_community.vectorstores.utils import DistanceStrategy
+from langchain_core.embeddings import Embeddings
 from langchain_db2.db2vs import DB2VS
 
 from lfx.base.vectorstores.model import LCVectorStoreComponent, check_cached_vector_store
@@ -91,6 +92,20 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
             options=["Similarity", "MMR"],
             value="Similarity",
             info="Type of search to perform",
+        ),
+        DropdownInput(
+            name="retrieval_mode",
+            display_name="Retrieval Mode",
+            options=["Vector", "Hybrid"],
+            value="Vector",
+            info="Choose between pure vector search and hybrid SQL + vector retrieval",
+        ),
+        HandleInput(
+            name="metadata_filters",
+            display_name="Metadata Filters",
+            input_types=["Data", "dict"],
+            required=False,
+            info="Structured metadata filters for hybrid retrieval (e.g., {'brand': 'Nike', 'price_lt': 200})",
         ),
         DropdownInput(
             name="distance_strategy",
@@ -228,26 +243,37 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
                 for data in self.ingest_data:
                     if isinstance(data, Data):
                         doc = data.to_lc_document()
-                        # Ensure metadata is a simple dict
-                        doc.metadata = {}
+                        # Preserve metadata for hybrid retrieval
                         documents.append(doc)
                     elif isinstance(data, Document):
-                        # Clear metadata to avoid serialization issues
-                        data.metadata = {}
+                        # Preserve existing metadata
                         documents.append(data)
                     elif isinstance(data, pd.DataFrame):
-                        # Handle pandas DataFrame - convert each row to a document
+                        # Handle pandas DataFrame - extract metadata from columns
                         for _, row in data.iterrows():
+                            # Separate text content from metadata fields
+                            metadata = {}
                             text_parts = []
-                            for val in row.to_numpy():
-                                try:
+
+                            for col_name, val in row.items():
+                                # Common metadata fields to extract
+                                if col_name.lower() in ["brand", "category", "price", "product_id", "tenant_id", "id"]:
+                                    if pd.notna(val):
+                                        metadata[col_name] = val
+                                elif col_name.lower() in ["description", "text", "content"]:
+                                    # These are text content fields
                                     if pd.notna(val):
                                         text_parts.append(str(val))
-                                except (ValueError, TypeError):
-                                    # Handle arrays or other non-scalar values
-                                    text_parts.append(str(val))
-                            text = " ".join(text_parts)
-                            doc = Document(page_content=text, metadata={})
+                                else:
+                                    # Other fields go to text
+                                    try:
+                                        if pd.notna(val):
+                                            text_parts.append(str(val))
+                                    except (ValueError, TypeError):
+                                        text_parts.append(str(val))
+
+                            text = " ".join(text_parts) if text_parts else ""
+                            doc = Document(page_content=text, metadata=metadata)
                             documents.append(doc)
                     elif isinstance(data, pd.Series):
                         # Handle pandas Series - convert each value to a document
@@ -257,21 +283,37 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
                                     doc = Document(page_content=str(val), metadata={})
                                     documents.append(doc)
                             except (ValueError, TypeError):
-                                # Handle arrays or other non-scalar values
                                 doc = Document(page_content=str(val), metadata={})
                                 documents.append(doc)
                     elif isinstance(data, dict):
-                        # Handle JSON/dict objects
-                        text = (
-                            json.dumps(data)
-                            if not isinstance(data.get("text"), str)
-                            else data.get("text", json.dumps(data))
-                        )
-                        doc = Document(page_content=text, metadata={})
+                        # Handle JSON/dict objects - extract metadata intelligently
+                        metadata = {}
+                        text_content = None
+
+                        # Extract known metadata fields
+                        for key in ["brand", "category", "price", "product_id", "tenant_id", "id"]:
+                            if key in data:
+                                metadata[key] = data[key]
+
+                        # Extract text content
+                        if "description" in data:
+                            text_content = data["description"]
+                        elif "text" in data:
+                            text_content = data["text"]
+                        elif "content" in data:
+                            text_content = data["content"]
+                        else:
+                            # Use entire dict as text if no specific text field
+                            text_content = json.dumps(data)
+
+                        doc = Document(page_content=text_content, metadata=metadata)
                         documents.append(doc)
                     elif hasattr(data, "text"):
                         # Handle Message or any object with text attribute
-                        doc = Document(page_content=data.text, metadata={})
+                        metadata = {}
+                        if hasattr(data, "metadata") and isinstance(data.metadata, dict):
+                            metadata = data.metadata
+                        doc = Document(page_content=data.text, metadata=metadata)
                         documents.append(doc)
                     elif isinstance(data, str):
                         # Handle plain strings
@@ -312,10 +354,173 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
 
         return vector_store
 
-    def search_documents(self) -> list[Data]:
-        """Perform similarity search and return results."""
-        vector_store = self.build_vector_store()
+    def _build_filter_clause(self, filters: dict) -> tuple[str, list]:
+        """Build SQL WHERE clause from metadata filters.
 
+        Args:
+            filters: Dictionary of filter conditions
+
+        Returns:
+            Tuple of (WHERE clause string, list of parameter values)
+
+        Supported filter formats:
+            - field_name: value (equality)
+            - field_name_lt: value (less than)
+            - field_name_lte: value (less than or equal)
+            - field_name_gt: value (greater than)
+            - field_name_gte: value (greater than or equal)
+        """
+        if not filters:
+            return "", []
+
+        where_clauses = []
+        params = []
+
+        for key, value in filters.items():
+            # Parse filter key for operators
+            if key.endswith("_lt"):
+                field = key[:-3]
+                where_clauses.append(f"{field} < ?")
+                params.append(value)
+            elif key.endswith("_lte"):
+                field = key[:-4]
+                where_clauses.append(f"{field} <= ?")
+                params.append(value)
+            elif key.endswith("_gt"):
+                field = key[:-3]
+                where_clauses.append(f"{field} > ?")
+                params.append(value)
+            elif key.endswith("_gte"):
+                field = key[:-4]
+                where_clauses.append(f"{field} >= ?")
+                params.append(value)
+            else:
+                # Default to equality
+                where_clauses.append(f"{key} = ?")
+                params.append(value)
+
+        where_sql = " AND ".join(where_clauses)
+        return where_sql, params
+
+    def hybrid_search(self, query_text: str, filters: dict, k: int = 5) -> list[Data]:
+        """Perform hybrid search combining vector similarity and SQL filtering.
+
+        Args:
+            query_text: The search query text
+            filters: Dictionary of metadata filters
+            k: Number of results to return
+
+        Returns:
+            List of Data objects with search results
+        """
+        from langchain_core.documents import Document
+
+        self.log("Running hybrid retrieval...")
+
+        # Get vector store and connection
+        vector_store = self.build_vector_store()
+        connection = vector_store.client
+
+        # Generate query embedding
+        self.log(f"Generating embedding for query: {query_text[:50]}...")
+        # Use the public embedding function instead of private method
+        if isinstance(vector_store.embedding_function, Embeddings):
+            query_embedding = vector_store.embedding_function.embed_query(query_text)
+        else:
+            query_embedding = vector_store.embedding_function(query_text)
+        embedding_dim = len(query_embedding)
+
+        # Build WHERE clause from filters
+        where_sql, filter_params = self._build_filter_clause(filters)
+
+        if where_sql:
+            self.log(f"Generated WHERE clause: {where_sql}")
+            self.log(f"Filter parameters: {filter_params}")
+        else:
+            self.log("No filters provided - using pure vector search")
+
+        # Get distance function
+        distance_func_map = {
+            "COSINE": "COSINE",
+            "EUCLIDEAN_DISTANCE": "EUCLIDEAN",
+            "DOT_PRODUCT": "DOT",
+        }
+        distance_func = distance_func_map.get(self.distance_strategy, "COSINE")
+
+        # Build SQL query
+        # Note: column_names are validated by DB2VS, not user input
+        column_names = vector_store.column_names
+
+        # S608: column_names from DB2VS are validated, not direct user input
+        base_query = f"""
+        SELECT {column_names["id"]},
+               {column_names["text"]},
+               {column_names["metadata"]},
+               VECTOR_DISTANCE(
+                   {column_names["embedding"]},
+                   VECTOR(?, {embedding_dim}, FLOAT32),
+                   {distance_func}
+               ) as distance
+        FROM {vector_store.table_name}
+        """  # noqa: S608
+
+        if where_sql:
+            base_query += f"\nWHERE {where_sql}"
+
+        base_query += f"\nORDER BY distance\nFETCH FIRST {k} ROWS ONLY"
+
+        self.log("Executing hybrid search query...")
+
+        # Execute query
+        cursor = connection.cursor()
+        try:
+            # Prepare parameters: embedding string first, then filter params
+            query_params = [str(query_embedding), *filter_params]
+
+            cursor.execute(base_query, query_params)
+            results = cursor.fetchall()
+
+            self.log(f"Retrieved {len(results)} documents")
+
+            # Convert results to Documents
+            documents = []
+            for result in results:
+                # Handle metadata - convert memoryview/bytes to dict if needed
+                meta_raw = result[2]
+                if meta_raw is None:
+                    metadata = {}
+                elif isinstance(meta_raw, (bytes, memoryview)):
+                    import json
+
+                    metadata = json.loads(bytes(meta_raw).decode("utf-8"))
+                elif isinstance(meta_raw, str):
+                    import json
+
+                    metadata = json.loads(meta_raw)
+                else:
+                    metadata = {}
+
+                # Add similarity score to metadata
+                metadata["similarity_score"] = float(result[3])
+
+                doc = Document(
+                    page_content=(result[1] if result[1] is not None else ""),
+                    metadata=metadata,
+                )
+                documents.append(doc)
+
+            return docs_to_data(documents)
+
+        finally:
+            cursor.close()
+
+    def search_documents(self) -> list[Data]:
+        """Perform similarity search and return results.
+
+        Supports two retrieval modes:
+        - Vector: Pure vector similarity search (backward compatible)
+        - Hybrid: Combined vector similarity + SQL metadata filtering
+        """
         if not self.search_query:
             return []
 
@@ -330,6 +535,36 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
         elif not isinstance(self.search_query, str):
             # Convert any other type to string
             query_text = str(self.search_query)
+
+        # Check retrieval mode
+        retrieval_mode = getattr(self, "retrieval_mode", "Vector")
+
+        if retrieval_mode == "Hybrid":
+            # Hybrid retrieval with metadata filtering
+            self.log("Using Hybrid retrieval mode")
+
+            # Extract filters
+            filters = {}
+            if self.metadata_filters:
+                if isinstance(self.metadata_filters, dict):
+                    filters = self.metadata_filters
+                elif isinstance(self.metadata_filters, Data):
+                    # Try to extract dict from Data object
+                    if hasattr(self.metadata_filters, "data") and isinstance(self.metadata_filters.data, dict):
+                        filters = self.metadata_filters.data
+                    else:
+                        self.log("Warning: metadata_filters is Data but couldn't extract dict")
+                else:
+                    self.log(f"Warning: metadata_filters type {type(self.metadata_filters)} not supported")
+
+            if filters:
+                self.log(f"Applying filters: {filters}")
+                return self.hybrid_search(query_text=query_text, filters=filters, k=self.number_of_results)
+            self.log("No filters provided, falling back to vector search")
+
+        # Vector retrieval (default, backward compatible)
+        self.log("Using Vector retrieval mode")
+        vector_store = self.build_vector_store()
 
         if self.search_type == "Similarity":
             docs = vector_store.similarity_search(
