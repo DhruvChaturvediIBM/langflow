@@ -196,13 +196,26 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
         }
 
         try:
-            # Build vector store
+            # Validate embedding model is provided
+            if not self.embedding:
+                msg = (
+                    "❌ Embedding Model Required\n\n"
+                    "Please connect an embedding model to the 'Embedding Model' input.\n"
+                    "This is required to generate embeddings for your data."
+                )
+                raise ValueError(msg)
+
+            # Build vector store (will automatically generate embeddings for existing empty rows)
+            self.log(f"Connecting to DB2 table: {self.collection_name}...")
             vector_store = DB2VS(
                 client=connection,
                 embedding_function=self.embedding,
                 table_name=self.collection_name,
                 distance_strategy=distance_strategy_map.get(self.distance_strategy, DistanceStrategy.COSINE),
             )
+
+            self.log(f"✓ Connected to DB2 table: {self.collection_name}")
+            self.log("Note: If table had empty embeddings, they have been automatically generated")
 
             # Add documents if provided
             if self.ingest_data:
@@ -292,12 +305,12 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
                             )
                             raise ValueError(msg) from e
                         raise
-                return vector_store
-
         except Exception:
             # Ensure connection is closed on error
             connection.close()
             raise
+
+        return vector_store
 
     def search_documents(self) -> list[Data]:
         """Perform similarity search and return results."""
