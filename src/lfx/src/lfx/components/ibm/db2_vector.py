@@ -321,8 +321,12 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
                     elif hasattr(data, "text"):
                         # Handle Message or any object with text attribute
                         metadata = {}
-                        if hasattr(data, "metadata") and isinstance(data.metadata, dict):
-                            metadata = data.metadata
+                        if hasattr(data, "metadata"):
+                            # Convert metadata to plain dict to ensure JSON serializability
+                            if isinstance(data.metadata, dict):
+                                metadata = dict(data.metadata)
+                            elif hasattr(data.metadata, "__dict__"):
+                                metadata = dict(data.metadata.__dict__)
                         doc = Document(page_content=data.text, metadata=metadata)
                         documents.append(doc)
                     elif isinstance(data, str):
@@ -345,12 +349,19 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
                                             "brand",
                                             "category",
                                             "price",
+                                            "rating",
                                             "product_id",
                                             "tenant_id",
                                             "id",
                                         ]:
                                             if pd.notna(val):
-                                                metadata[col_name] = val
+                                                # Convert to Python native types for JSON serialization
+                                                if isinstance(val, (pd.Int64Dtype, pd.Float64Dtype)):
+                                                    metadata[col_name] = float(val)
+                                                elif isinstance(val, (int, float)):
+                                                    metadata[col_name] = val
+                                                else:
+                                                    metadata[col_name] = str(val)
                                         elif col_name.lower() in ["description", "text", "content"]:
                                             if pd.notna(val):
                                                 text_parts.append(str(val))
