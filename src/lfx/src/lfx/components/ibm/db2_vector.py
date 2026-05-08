@@ -103,9 +103,9 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
         HandleInput(
             name="metadata_filters",
             display_name="Metadata Filters",
-            input_types=["Data", "dict"],
+            input_types=["Data", "dict", "Message", "str"],
             required=False,
-            info="Structured metadata filters for hybrid retrieval (e.g., {'brand': 'Nike', 'price_lt': 200})",
+            info="Metadata filters as JSON string, dict, Message, or Data (e.g., {'brand': 'Nike', 'price_lt': 200})",
         ),
         DropdownInput(
             name="distance_strategy",
@@ -599,17 +599,34 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
             # Hybrid retrieval with metadata filtering
             self.log("Using Hybrid retrieval mode")
 
-            # Extract filters
+            # Extract filters from various input types
             filters = {}
             if self.metadata_filters:
+                import json
+
                 if isinstance(self.metadata_filters, dict):
+                    # Direct dict input
                     filters = self.metadata_filters
+                elif isinstance(self.metadata_filters, str):
+                    # JSON string input
+                    try:
+                        filters = json.loads(self.metadata_filters)
+                        self.log(f"Parsed JSON string filters: {filters}")
+                    except json.JSONDecodeError as e:
+                        self.log(f"Warning: Failed to parse JSON string: {e}")
                 elif isinstance(self.metadata_filters, Data):
-                    # Try to extract dict from Data object
+                    # Data object input
                     if hasattr(self.metadata_filters, "data") and isinstance(self.metadata_filters.data, dict):
                         filters = self.metadata_filters.data
                     else:
                         self.log("Warning: metadata_filters is Data but couldn't extract dict")
+                elif hasattr(self.metadata_filters, "text"):
+                    # Message object input
+                    try:
+                        filters = json.loads(self.metadata_filters.text)
+                        self.log(f"Parsed Message text as JSON: {filters}")
+                    except json.JSONDecodeError as e:
+                        self.log(f"Warning: Failed to parse Message text as JSON: {e}")
                 else:
                     self.log(f"Warning: metadata_filters type {type(self.metadata_filters)} not supported")
 
