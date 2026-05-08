@@ -126,6 +126,14 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
     @check_cached_vector_store
     def build_vector_store(self) -> DB2VS:
         """Build and return the DB2 vector store instance."""
+        self.log("=" * 60)
+        self.log("🔧 BUILD_VECTOR_STORE CALLED")
+        self.log(f"ingest_data type: {type(self.ingest_data)}")
+        self.log(f"ingest_data value: {self.ingest_data}")
+        self.log(f"ingest_data is None: {self.ingest_data is None}")
+        self.log(f"ingest_data length: {len(self.ingest_data) if self.ingest_data else 0}")
+        self.log("=" * 60)
+
         # Validate inputs first
         if not self.database or not self.hostname or not self.username or not self.password:
             msg = (
@@ -318,9 +326,49 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
                         doc = Document(page_content=data.text, metadata=metadata)
                         documents.append(doc)
                     elif isinstance(data, str):
-                        # Handle plain strings
-                        doc = Document(page_content=data, metadata={})
-                        documents.append(doc)
+                        # Check if it's CSV content
+                        if "," in data and "\n" in data:
+                            # Likely CSV - try to parse it
+                            try:
+                                import io
+
+                                df = pd.read_csv(io.StringIO(data))
+                                self.log(f"Detected CSV format with {len(df)} rows")
+
+                                # Process as DataFrame
+                                for _, row in df.iterrows():
+                                    metadata = {}
+                                    text_parts = []
+
+                                    for col_name, val in row.items():
+                                        if col_name.lower() in [
+                                            "brand",
+                                            "category",
+                                            "price",
+                                            "product_id",
+                                            "tenant_id",
+                                            "id",
+                                        ]:
+                                            if pd.notna(val):
+                                                metadata[col_name] = val
+                                        elif col_name.lower() in ["description", "text", "content"]:
+                                            if pd.notna(val):
+                                                text_parts.append(str(val))
+                                        # Other fields go to text
+                                        elif pd.notna(val):
+                                            text_parts.append(str(val))
+
+                                    text = " ".join(text_parts) if text_parts else ""
+                                    doc = Document(page_content=text, metadata=metadata)
+                                    documents.append(doc)
+                            except (ValueError, pd.errors.ParserError) as e:
+                                self.log(f"Failed to parse as CSV: {e}, treating as plain text")
+                                doc = Document(page_content=data, metadata={})
+                                documents.append(doc)
+                        else:
+                            # Handle plain strings
+                            doc = Document(page_content=data, metadata={})
+                            documents.append(doc)
 
                 if documents:
                     self.log(f"📝 Prepared {len(documents)} documents for ingestion")
