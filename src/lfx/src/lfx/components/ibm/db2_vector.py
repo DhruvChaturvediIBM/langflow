@@ -508,7 +508,11 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
         # Note: column_names are validated by DB2VS, not user input
         column_names = vector_store.column_names
 
+        # Log the column names for debugging
+        self.log(f"Using column names: {column_names}")
+
         # S608: column_names from DB2VS are validated, not direct user input
+        # Column names already include quotes if needed (e.g., "text" or TEXT)
         base_query = f"""
         SELECT {column_names["id"]},
                {column_names["text"]},
@@ -520,6 +524,8 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
                ) as distance
         FROM {vector_store.table_name}
         """  # noqa: S608
+
+        self.log(f"Base SQL query: {base_query}")
 
         if where_sql:
             base_query += f"\nWHERE {where_sql}"
