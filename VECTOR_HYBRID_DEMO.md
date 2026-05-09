@@ -91,22 +91,27 @@ This demo implements a complete **Vector Ingestion and Hybrid Retrieval Pipeline
 ### Installation & Run
 
 ```bash
-# Run the complete demo (includes setup)
-./start.sh --demo
+# First, set up Langflow (one-time setup)
+./start.sh
+
+# Then run the demo
+./run_demo.sh
 ```
 
-This single command will:
+The `start.sh` script will:
 - ✅ Check prerequisites
 - ✅ Create virtual environment
 - ✅ Install all dependencies (Langflow, langchain-db2, ibm-db, sentence-transformers)
-- ✅ Run the vector hybrid search demo
+
+The `run_demo.sh` script will:
+- ✅ Run the vector hybrid search demonstration
+- ✅ Show ingestion, vector search, and hybrid search in action
 
 ### Manual Run (if venv already exists)
 
 ```bash
-cd langflow
 source .venv/bin/activate
-python ../vector_hybrid_search_demo.py
+python vector_hybrid_search_demo.py
 ```
 
 ## Demo Flow

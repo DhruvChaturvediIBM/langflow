@@ -67,9 +67,15 @@ Create `db2_config.json` in the project root:
 ./start.sh
 ```
 
+This will:
+- Check prerequisites
+- Create virtual environment
+- Install all dependencies
+- Start Langflow on http://127.0.0.1:7860
+
 ### Run Vector Hybrid Search Demo
 ```bash
-./start.sh --demo
+./run_demo.sh
 ```
 
 This runs a complete demonstration of:
@@ -78,11 +84,6 @@ This runs a complete demonstration of:
 - **Hybrid Search**: Vector search + SQL filters
 
 See [VECTOR_HYBRID_DEMO.md](VECTOR_HYBRID_DEMO.md) for detailed documentation.
-
-### Run Test Script
-```bash
-./start.sh --test
-```
 
 ### Clean Install
 ```bash

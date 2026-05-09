@@ -75,22 +75,17 @@ Usage:
 
 Options:
     --help          Show this help message
-    --test          Run test script instead of starting Langflow
-    --demo          Run vector hybrid search demo
     --clean         Clean install (remove existing venv)
     --skip-deps     Skip dependency installation
     --port PORT     Specify Langflow port (default: 7860)
 
 Examples:
     ./start.sh                    # Full setup and start Langflow
-    ./start.sh --test             # Run vector ingestion test
-    ./start.sh --demo             # Run vector hybrid search demo
     ./start.sh --clean            # Clean install and start
     ./start.sh --port 8080        # Start on port 8080
 
 Requirements:
     - Python 3.10 or higher
-    - DB2 credentials in db2_config.json
     - Internet connection for package installation
 
 For more information, see README.md
@@ -210,41 +205,6 @@ start_langflow() {
     langflow run --host 127.0.0.1 --port "$PORT"
 }
 
-run_test() {
-    print_header "Running Vector Ingestion Test"
-    
-    source "$VENV_DIR/bin/activate"
-    
-    if [ ! -f "$SCRIPT_DIR/db2_config.json" ]; then
-        print_error "DB2 configuration file not found!"
-        print_info "Please create db2_config.json with your DB2 credentials"
-        exit 1
-    fi
-    
-    print_info "Running test script..."
-    echo
-    
-    cd "$LANGFLOW_DIR"
-    python "$SCRIPT_DIR/test_vector_ingestion_hybrid_retrieval.py"
-}
-
-run_demo() {
-    print_header "Running Vector Hybrid Search Demo"
-    
-    source "$VENV_DIR/bin/activate"
-    
-    if [ ! -f "$SCRIPT_DIR/db2_config.json" ]; then
-        print_error "DB2 configuration file not found!"
-        print_info "Please create db2_config.json with your DB2 credentials"
-        exit 1
-    fi
-    
-    print_info "Running demo script..."
-    echo
-    
-    cd "$LANGFLOW_DIR"
-    python "$SCRIPT_DIR/vector_hybrid_search_demo.py"
-}
 
 show_banner() {
     cat << "EOF"
@@ -270,8 +230,6 @@ EOF
 
 # Default values
 PORT=7860
-RUN_TEST=false
-RUN_DEMO=false
 CLEAN_INSTALL=false
 SKIP_DEPS=false
 
@@ -281,14 +239,6 @@ while [[ $# -gt 0 ]]; do
         --help)
             show_help
             exit 0
-            ;;
-        --test)
-            RUN_TEST=true
-            shift
-            ;;
-        --demo)
-            RUN_DEMO=true
-            shift
             ;;
         --clean)
             CLEAN_INSTALL=true
@@ -317,13 +267,6 @@ show_banner
 check_prerequisites
 create_venv
 install_dependencies
-
-if [ "$RUN_TEST" = true ]; then
-    run_test
-elif [ "$RUN_DEMO" = true ]; then
-    run_demo
-else
-    start_langflow
-fi
+start_langflow
 
 # Made with Bob
