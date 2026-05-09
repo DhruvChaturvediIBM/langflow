@@ -100,12 +100,12 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
             value="Vector",
             info="Choose between pure vector search and hybrid SQL + vector retrieval",
         ),
-        HandleInput(
+        StrInput(
             name="metadata_filters",
-            display_name="Metadata Filters",
-            input_types=["Data", "dict", "Message", "str"],
+            display_name="Metadata Filters (JSON)",
             required=False,
-            info="Metadata filters as JSON string, dict, Message, or Data (e.g., {'brand': 'Nike', 'price_lt': 200})",
+            info='Metadata filters as JSON string (e.g., {"brand": "Nike", "price_lt": 150})',
+            placeholder='{"price_lt": 150}',
         ),
         DropdownInput(
             name="distance_strategy",
@@ -452,37 +452,33 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
             # Parse filter key for operators
             if key.endswith("_lt"):
                 field = key[:-3]
-                # Cast to VARCHAR first, then to DOUBLE to avoid CLOB->DOUBLE error
-                where_clauses.append(
-                    f"CAST(CAST(JSON_VALUE({metadata_col}, '$.{field}') AS VARCHAR(100)) AS DOUBLE) < ?"
-                )
+                # CORRECTED: Use JSON_VALUE with RETURNING clause for proper type casting
+                where_clauses.append(f"JSON_VALUE({metadata_col}, '$.{field}' RETURNING DECIMAL(10,2)) < ?")
                 params.append(float(value))
             elif key.endswith("_lte"):
                 field = key[:-4]
-                where_clauses.append(
-                    f"CAST(CAST(JSON_VALUE({metadata_col}, '$.{field}') AS VARCHAR(100)) AS DOUBLE) <= ?"
-                )
+                where_clauses.append(f"JSON_VALUE({metadata_col}, '$.{field}' RETURNING DECIMAL(10,2)) <= ?")
                 params.append(float(value))
             elif key.endswith("_gt"):
                 field = key[:-3]
-                where_clauses.append(
-                    f"CAST(CAST(JSON_VALUE({metadata_col}, '$.{field}') AS VARCHAR(100)) AS DOUBLE) > ?"
-                )
+                where_clauses.append(f"JSON_VALUE({metadata_col}, '$.{field}' RETURNING DECIMAL(10,2)) > ?")
                 params.append(float(value))
             elif key.endswith("_gte"):
                 field = key[:-4]
-                where_clauses.append(
-                    f"CAST(CAST(JSON_VALUE({metadata_col}, '$.{field}') AS VARCHAR(100)) AS DOUBLE) >= ?"
-                )
+                where_clauses.append(f"JSON_VALUE({metadata_col}, '$.{field}' RETURNING DECIMAL(10,2)) >= ?")
                 params.append(float(value))
-            # Default to equality - handle both string and numeric values
+            # Default to equality - handle both string, numeric, and boolean values
+            elif isinstance(value, bool):
+                # For boolean values, compare as string
+                where_clauses.append(f"JSON_VALUE({metadata_col}, '$.{key}' RETURNING VARCHAR(10)) = ?")
+                params.append(str(value).lower())
             elif isinstance(value, (int, float)):
-                # For numeric equality, cast VARCHAR first then DOUBLE
-                where_clauses.append(f"CAST(CAST(JSON_VALUE({metadata_col}, '$.{key}') AS VARCHAR(100)) AS DOUBLE) = ?")
+                # For numeric equality, use RETURNING DECIMAL
+                where_clauses.append(f"JSON_VALUE({metadata_col}, '$.{key}' RETURNING DECIMAL(10,2)) = ?")
                 params.append(float(value))
             else:
-                # For string equality, use direct comparison
-                where_clauses.append(f"JSON_VALUE({metadata_col}, '$.{key}') = ?")
+                # For string equality, use RETURNING VARCHAR
+                where_clauses.append(f"JSON_VALUE({metadata_col}, '$.{key}' RETURNING VARCHAR(100)) = ?")
                 params.append(str(value))
 
         where_sql = " AND ".join(where_clauses)
@@ -635,34 +631,22 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
             # Hybrid retrieval with metadata filtering
             self.log("Using Hybrid retrieval mode")
 
-            # Extract filters from various input types
+            # Extract filters from string input
             filters = {}
             if self.metadata_filters:
                 import json
 
-                if isinstance(self.metadata_filters, dict):
-                    # Direct dict input
-                    filters = self.metadata_filters
-                elif isinstance(self.metadata_filters, str):
-                    # JSON string input
-                    try:
-                        filters = json.loads(self.metadata_filters)
-                        self.log(f"Parsed JSON string filters: {filters}")
-                    except json.JSONDecodeError as e:
-                        self.log(f"Warning: Failed to parse JSON string: {e}")
-                elif isinstance(self.metadata_filters, Data):
-                    # Data object input
-                    if hasattr(self.metadata_filters, "data") and isinstance(self.metadata_filters.data, dict):
-                        filters = self.metadata_filters.data
-                    else:
-                        self.log("Warning: metadata_filters is Data but couldn't extract dict")
-                elif hasattr(self.metadata_filters, "text"):
-                    # Message object input
-                    try:
-                        filters = json.loads(self.metadata_filters.text)
-                        self.log(f"Parsed Message text as JSON: {filters}")
-                    except json.JSONDecodeError as e:
-                        self.log(f"Warning: Failed to parse Message text as JSON: {e}")
+                # metadata_filters is now always a string from StrInput
+                if isinstance(self.metadata_filters, str):
+                    # Strip whitespace
+                    filter_str = self.metadata_filters.strip()
+                    if filter_str:
+                        try:
+                            filters = json.loads(filter_str)
+                            self.log(f"Parsed JSON string filters: {filters}")
+                        except json.JSONDecodeError as e:
+                            self.log(f"Warning: Failed to parse JSON string: {e}")
+                            self.log(f"Filter string was: {filter_str}")
                 else:
                     self.log(f"Warning: metadata_filters type {type(self.metadata_filters)} not supported")
 
