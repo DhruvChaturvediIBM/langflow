@@ -1,0 +1,7 @@
+{
+  "database": "your_database_name",
+  "hostname": "your-db2-server.com",
+  "port": 50000,
+  "username": "your_username",
+  "password": "your_password"
+}
