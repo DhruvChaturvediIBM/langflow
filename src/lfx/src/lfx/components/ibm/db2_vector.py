@@ -8,7 +8,12 @@ from langchain_db2.db2vs import DB2VS
 from lfx.base.vectorstores.model import LCVectorStoreComponent, check_cached_vector_store
 from lfx.helpers.data import docs_to_data
 from lfx.inputs.inputs import BoolInput, DropdownInput, HandleInput, IntInput, SecretStrInput, StrInput
+from lfx.io import Output
 from lfx.schema.data import Data
+from lfx.schema.dataframe import DataFrame
+
+# Constants
+MAX_SAMPLE_DOCS = 3  # Maximum number of sample documents to log
 
 
 class DB2VectorStoreComponent(LCVectorStoreComponent):
@@ -100,13 +105,6 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
             value="Vector",
             info="Choose between pure vector search and hybrid SQL + vector retrieval",
         ),
-        StrInput(
-            name="metadata_filters",
-            display_name="Metadata Filters (JSON)",
-            required=False,
-            info='Metadata filters as JSON string (e.g., {"brand": "Nike", "price_lt": 150})',
-            placeholder='{"price_lt": 150}',
-        ),
         DropdownInput(
             name="distance_strategy",
             display_name="Distance Strategy",
@@ -115,11 +113,39 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
             info="Distance calculation strategy",
         ),
         BoolInput(
+            name="enable_natural_query_parsing",
+            display_name="Enable Natural Query Parsing",
+            value=False,
+            advanced=True,
+            info=(
+                "Automatically parse natural language queries into semantic search + filters "
+                "(e.g., 'nike shoes price < 200' → query='shoes' + filters={'brand':'Nike','price_lt':200})"
+            ),
+        ),
+        BoolInput(
             name="allow_dangerous_deserialization",
             display_name="Allow Dangerous Deserialization",
             value=False,
             advanced=True,
             info="Allow deserialization of pickled data (use with caution)",
+        ),
+    ]
+
+    outputs = [
+        Output(
+            display_name="Search Results",
+            name="search_results",
+            method="search_documents",
+        ),
+        Output(
+            display_name="Table",
+            name="dataframe",
+            method="as_dataframe",
+        ),
+        Output(
+            display_name="Vector Store",
+            name="vector_store",
+            method="build_vector_store",
         ),
     ]
 
@@ -260,16 +286,40 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
                         documents.append(data)
                     elif isinstance(data, pd.DataFrame):
                         # Handle pandas DataFrame - extract metadata from columns
-                        for _, row in data.iterrows():
+                        for row_idx, row in data.iterrows():
                             # Separate text content from metadata fields
                             metadata = {}
                             text_parts = []
+                            has_id = False
+
+                            # Common ID field patterns to detect
+                            id_patterns = [
+                                "id",
+                                "product_id",
+                                "sku",
+                                "item_id",
+                                "uuid",
+                                "product_code",
+                                "productid",
+                                "itemid",
+                                "product_sku",
+                                "code",
+                                "key",
+                            ]
 
                             for col_name, val in row.items():
+                                col_lower = col_name.lower()
+
+                                # Check if this column is an ID field
+                                is_id_field = any(pattern in col_lower for pattern in id_patterns)
+
                                 # Common metadata fields to extract
-                                if col_name.lower() in ["brand", "category", "price", "product_id", "tenant_id", "id"]:
+                                if col_lower in ["brand", "category", "price", "tenant_id"] or is_id_field:
                                     if pd.notna(val):
                                         metadata[col_name] = val
+                                        if is_id_field:
+                                            has_id = True
+                                            self.log(f"   ✓ Detected ID field: {col_name} = {val}")
                                 elif col_name.lower() in ["description", "text", "content"]:
                                     # These are text content fields
                                     if pd.notna(val):
@@ -281,6 +331,10 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
                                             text_parts.append(str(val))
                                     except (ValueError, TypeError):
                                         text_parts.append(str(val))
+
+                            # If no ID field exists, generate one from row index
+                            if not has_id:
+                                metadata["id"] = str(row_idx + 1)
 
                             text = " ".join(text_parts) if text_parts else ""
                             doc = Document(page_content=text, metadata=metadata)
@@ -300,10 +354,31 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
                         metadata = {}
                         text_content = None
 
-                        # Extract known metadata fields
-                        for key in ["brand", "category", "price", "product_id", "tenant_id", "id"]:
-                            if key in data:
-                                metadata[key] = data[key]
+                        # Common ID field patterns to detect
+                        id_patterns = [
+                            "id",
+                            "product_id",
+                            "sku",
+                            "item_id",
+                            "uuid",
+                            "product_code",
+                            "productid",
+                            "itemid",
+                            "product_sku",
+                            "code",
+                            "key",
+                        ]
+
+                        # Extract metadata fields (including flexible ID detection)
+                        for key, value in data.items():
+                            key_lower = key.lower()
+                            is_id_field = any(pattern in key_lower for pattern in id_patterns)
+
+                            # Extract known metadata fields or ID fields
+                            if key_lower in ["brand", "category", "price", "tenant_id"] or is_id_field:
+                                metadata[key] = value
+                                if is_id_field:
+                                    self.log(f"   ✓ Detected ID field in dict: {key} = {value}")
 
                         # Extract text content
                         if "description" in data:
@@ -340,9 +415,10 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
                                 self.log(f"Detected CSV format with {len(df)} rows")
 
                                 # Process as DataFrame
-                                for _, row in df.iterrows():
+                                for row_idx, row in df.iterrows():
                                     metadata = {}
                                     text_parts = []
+                                    has_id = False
 
                                     for col_name, val in row.items():
                                         if col_name.lower() in [
@@ -362,12 +438,18 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
                                                     metadata[col_name] = val
                                                 else:
                                                     metadata[col_name] = str(val)
+                                                if col_name.lower() in ["product_id", "id"]:
+                                                    has_id = True
                                         elif col_name.lower() in ["description", "text", "content"]:
                                             if pd.notna(val):
                                                 text_parts.append(str(val))
                                         # Other fields go to text
                                         elif pd.notna(val):
                                             text_parts.append(str(val))
+
+                                    # If no ID field exists, generate one from row index
+                                    if not has_id:
+                                        metadata["id"] = str(row_idx + 1)
 
                                     text = " ".join(text_parts) if text_parts else ""
                                     doc = Document(page_content=text, metadata=metadata)
@@ -384,6 +466,22 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
                 if documents:
                     self.log(f"📝 Prepared {len(documents)} documents for ingestion")
                     self.log("Sample document metadata: " + str(documents[0].metadata if documents else {}))
+
+                    # Check if all documents have IDs
+                    docs_with_ids = sum(1 for doc in documents if "id" in doc.metadata or "product_id" in doc.metadata)
+                    self.log(f"📊 Documents with IDs: {docs_with_ids}/{len(documents)}")
+
+                    if docs_with_ids < len(documents):
+                        self.log(f"⚠️ WARNING: {len(documents) - docs_with_ids} documents missing ID field!")
+                        self.log("   This will cause hex IDs to be generated for ALL documents")
+                        self.log("   Checking first few documents without IDs:")
+                        count = 0
+                        for idx, doc in enumerate(documents):
+                            if "id" not in doc.metadata and "product_id" not in doc.metadata:
+                                self.log(f"   Document {idx}: metadata = {doc.metadata}")
+                                count += 1
+                                if count >= MAX_SAMPLE_DOCS:
+                                    break
 
                     try:
                         self.log(f"🔄 Adding {len(documents)} documents to DB2 table '{self.collection_name}'...")
@@ -497,7 +595,12 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
         """
         from langchain_core.documents import Document
 
-        self.log("Running hybrid retrieval...")
+        self.log("=" * 60)
+        self.log("🔀 HYBRID_SEARCH CALLED")
+        self.log(f"   Query: {query_text}")
+        self.log(f"   Filters: {filters}")
+        self.log(f"   Top K: {k}")
+        self.log("=" * 60)
 
         # Get vector store and connection
         vector_store = self.build_vector_store()
@@ -550,12 +653,23 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
         FROM {vector_store.table_name}
         """  # noqa: S608
 
-        self.log(f"Base SQL query: {base_query}")
-
         if where_sql:
             base_query += f"\nWHERE {where_sql}"
 
         base_query += f"\nORDER BY distance\nFETCH FIRST {k} ROWS ONLY"
+
+        # Log the complete SQL query
+        self.log("=" * 80)
+        self.log("📝 GENERATED SQL QUERY:")
+        self.log("=" * 80)
+        self.log(base_query)
+        self.log("=" * 80)
+        self.log(f"🔢 Query Embedding (first 10 values): {query_embedding[:10]}")
+        self.log(f"📊 Embedding Dimension: {embedding_dim}")
+        self.log(f"🎯 Distance Function: {distance_func}")
+        if filter_params:
+            self.log(f"🔍 Filter Parameters: {filter_params}")
+        self.log("=" * 80)
 
         self.log("Executing hybrid search query...")
 
@@ -568,11 +682,21 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
             cursor.execute(base_query, query_params)
             results = cursor.fetchall()
 
-            self.log(f"Retrieved {len(results)} documents")
+            self.log("📊 Query executed successfully")
+            self.log(f"✅ Retrieved {len(results)} documents from DB2")
+
+            if len(results) == 0:
+                self.log("⚠️ WARNING: No results found!")
+                self.log("   Possible reasons:")
+                self.log("   1. Filters are too restrictive")
+                self.log("   2. No data matches the query")
+                self.log("   3. Table is empty")
+                self.log("   4. Metadata field names don't match")
 
             # Convert results to Documents
             documents = []
-            for result in results:
+            for idx, result in enumerate(results, 1):
+                self.log(f"   Processing result {idx}/{len(results)}")
                 # Handle metadata - convert memoryview/bytes to dict if needed
                 meta_raw = result[2]
                 if meta_raw is None:
@@ -609,7 +733,12 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
         - Vector: Pure vector similarity search (backward compatible)
         - Hybrid: Combined vector similarity + SQL metadata filtering
         """
+        self.log("=" * 60)
+        self.log("🔍 SEARCH_DOCUMENTS CALLED")
+        self.log("=" * 60)
+
         if not self.search_query:
+            self.log("⚠️ No search query provided - returning empty results")
             return []
 
         # Extract text from search_query (handle Message, Data, or string)
@@ -617,66 +746,188 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
         if hasattr(self.search_query, "text"):
             # Handle Message objects
             query_text = self.search_query.text
+            self.log(f"📝 Extracted query from Message: {query_text}")
         elif isinstance(self.search_query, Data):
             # Handle Data objects
             query_text = self.search_query.text_data
+            self.log(f"📝 Extracted query from Data: {query_text}")
         elif not isinstance(self.search_query, str):
             # Convert any other type to string
             query_text = str(self.search_query)
+            self.log(f"📝 Converted query to string: {query_text}")
+        else:
+            self.log(f"📝 Query text: {query_text}")
 
         # Check retrieval mode
         retrieval_mode = getattr(self, "retrieval_mode", "Vector")
+        self.log(f"🎯 Retrieval Mode: {retrieval_mode}")
+        self.log(f"🔢 Number of results: {self.number_of_results}")
 
         if retrieval_mode == "Hybrid":
             # Hybrid retrieval with metadata filtering
-            self.log("Using Hybrid retrieval mode")
+            self.log("🔀 Using Hybrid retrieval mode")
 
-            # Extract filters from string input
+            # Extract filters from string input OR natural query parsing
             filters = {}
-            if self.metadata_filters:
-                import json
 
-                # metadata_filters is now always a string from StrInput
-                if isinstance(self.metadata_filters, str):
-                    # Strip whitespace
-                    filter_str = self.metadata_filters.strip()
-                    if filter_str:
+            # Initialize query parser on first search if enabled
+            if getattr(self, "enable_natural_query_parsing", False):
+                # Try to import parser modules
+                try:
+                    from .natural_query_parser import NaturalQueryParser, SchemaMapper
+
+                    parser_available = True
+                except ImportError:
+                    parser_available = False
+                    self.log("⚠️ Natural query parser not available (module not found)")
+
+                if parser_available:
+                    if not hasattr(self, "query_parser") or self.query_parser is None:
                         try:
-                            filters = json.loads(filter_str)
-                            self.log(f"Parsed JSON string filters: {filters}")
-                        except json.JSONDecodeError as e:
-                            self.log(f"Warning: Failed to parse JSON string: {e}")
-                            self.log(f"Filter string was: {filter_str}")
-                else:
-                    self.log(f"Warning: metadata_filters type {type(self.metadata_filters)} not supported")
+                            self.log("🔍 Initializing natural query parser from DB2...")
+                            # Query DB2 directly to get a sample metadata
+                            conn = self._get_connection()
+                            cursor = conn.cursor()
+                            # Query to get sample metadata for schema detection
+                            query = f'SELECT "metadata" FROM "{self.collection_name}" FETCH FIRST 1 ROWS ONLY'  # noqa: S608
+                            cursor.execute(query)
+                            row = cursor.fetchone()
+                            cursor.close()
+
+                            if row and row[0]:
+                                import json
+
+                                metadata = json.loads(row[0])
+                                schema = SchemaMapper.from_metadata_sample(metadata)
+                                self.query_parser = NaturalQueryParser(schema)
+                                self.log(f"✅ Schema detected: {len(schema.fields)} fields")
+                                for field in schema.fields[:5]:
+                                    self.log(f"   - {field.name} ({field.type})")
+                            else:
+                                self.log("⚠️ No documents found for schema detection")
+                                self.query_parser = None
+                        except Exception as e:  # noqa: BLE001
+                            self.log(f"⚠️ Failed to initialize query parser: {e}")
+                            self.query_parser = None
+
+                    # Try parsing the query
+                    if self.query_parser:
+                        try:
+                            self.log("🤖 Parsing natural language query...")
+                            self.log(f"   Original query: {query_text}")
+
+                            parsed = self.query_parser.parse(query_text)
+
+                            # Update query text with semantic query
+                            query_text = parsed["query"]
+                            filters = parsed["filters"]
+
+                            self.log("✅ Natural query parsing successful:")
+                            self.log(f"   Semantic query: {query_text}")
+                            self.log(f"   Extracted filters: {filters}")
+                        except Exception as e:  # noqa: BLE001
+                            self.log(f"⚠️ Natural query parsing failed: {e}")
 
             if filters:
-                self.log(f"Applying filters: {filters}")
-                return self.hybrid_search(query_text=query_text, filters=filters, k=self.number_of_results)
-            self.log("No filters provided, falling back to vector search")
+                self.log(f"🎯 Applying filters: {filters}")
+                results = self.hybrid_search(query_text=query_text, filters=filters, k=self.number_of_results)
+                self.log(f"✅ Hybrid search returned {len(results)} results")
+                return results
+            self.log("⚠️ No filters provided, falling back to vector search")
 
         # Vector retrieval (default, backward compatible)
-        self.log("Using Vector retrieval mode")
+        self.log("📊 Using Vector retrieval mode")
         vector_store = self.build_vector_store()
 
+        self.log(f"🔍 Search type: {self.search_type}")
         if self.search_type == "Similarity":
+            self.log(f"🔎 Performing similarity search for: '{query_text}'")
             docs = vector_store.similarity_search(
                 query=query_text,
                 k=self.number_of_results,
             )
         else:  # MMR
+            self.log(f"🔎 Performing MMR search for: '{query_text}'")
             docs = vector_store.max_marginal_relevance_search(
                 query=query_text,
                 k=self.number_of_results,
             )
 
+        self.log(f"✅ Vector search returned {len(docs)} documents")
         return docs_to_data(docs)
 
-    def build(self) -> DB2VS | list[Data]:
-        """Build the component and return either the vector store or search results."""
+    def as_dataframe(self) -> DataFrame:
+        """Return table data as DataFrame with optional search and filtering."""
+        self.log("=" * 60)
+        self.log("📊 TABLE OUTPUT MODE")
+        self.log("=" * 60)
+
+        # Check if search query is provided
         if self.search_query:
-            return self.search_documents()
-        return self.build_vector_store()
+            self.log("🔍 Search query provided - performing filtered search")
+            # Use search_documents which handles both Vector and Hybrid modes
+            search_results = self.search_documents()
+            return DataFrame(search_results)
+        # No search query - return all table data
+        from langchain_core.documents import Document
+
+        self.log("📋 No search query - returning all table data")
+
+        # Get vector store and connection
+        vector_store = self.build_vector_store()
+        connection = vector_store.client
+        column_names = vector_store.column_names
+
+        # Build SQL query to get all data
+        query = f"""
+            SELECT {column_names["id"]},
+                   {column_names["text"]},
+                   {column_names["metadata"]}
+            FROM {vector_store.table_name}
+            """  # noqa: S608
+
+        self.log(f"📝 Executing SQL: {query.strip()}")
+
+        # Execute query
+        cursor = connection.cursor()
+        try:
+            cursor.execute(query)
+            results = cursor.fetchall()
+
+            self.log(f"✅ Retrieved {len(results)} rows from table")
+
+            # Convert results to Documents
+            documents = []
+            for result in results:
+                # Handle metadata
+                meta_raw = result[2]
+                if meta_raw is None:
+                    metadata = {}
+                elif isinstance(meta_raw, (bytes, memoryview)):
+                    import json
+
+                    metadata = json.loads(bytes(meta_raw).decode("utf-8"))
+                elif isinstance(meta_raw, str):
+                    import json
+
+                    metadata = json.loads(meta_raw)
+                else:
+                    metadata = {}
+
+                # Add ID to metadata
+                metadata["id"] = result[0]
+
+                doc = Document(
+                    page_content=(result[1] if result[1] is not None else ""),
+                    metadata=metadata,
+                )
+                documents.append(doc)
+
+            data_list = docs_to_data(documents)
+            return DataFrame(data_list)
+
+        finally:
+            cursor.close()
 
 
 # Made with Bob
