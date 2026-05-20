@@ -889,7 +889,7 @@
                 "dependencies": [
                   {
                     "name": "orjson",
-                    "version": "3.11.9"
+                    "version": "3.11.8"
                   },
                   {
                     "name": "fastapi",
@@ -1785,7 +1785,7 @@
                 "dependencies": [
                   {
                     "name": "orjson",
-                    "version": "3.11.9"
+                    "version": "3.11.8"
                   },
                   {
                     "name": "pandas",
@@ -1809,7 +1809,7 @@
                   },
                   {
                     "name": "googleapiclient",
-                    "version": "2.196.0"
+                    "version": "2.195.0"
                   }
                 ],
                 "total_dependencies": 7
