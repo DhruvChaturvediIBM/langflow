@@ -8,7 +8,7 @@ from lfx.components.ibm.db2_security import (
     validate_sql_query_safety,
 )
 from lfx.custom.custom_component.component import Component
-from lfx.inputs.inputs import BoolInput, HandleInput, IntInput, SecretStrInput, StrInput
+from lfx.inputs.inputs import BoolInput, FileInput, HandleInput, IntInput, SecretStrInput, StrInput
 from lfx.io import Output
 from lfx.schema.data import Data
 
@@ -27,10 +27,38 @@ class DB2SQLComponent(Component):
     name = "DB2SQL"
 
     inputs = [
+        # Main inputs
+        HandleInput(
+            name="sql_query",
+            display_name="SQL Query",
+            input_types=["Message", "Text", "Data"],
+            required=False,
+            info="SQL query to execute. Accepts direct text input, Message objects, or Data objects with query text.",
+        ),
+        BoolInput(
+            name="read_only_mode",
+            display_name="Read-Only Mode",
+            value=True,
+            info="If enabled, only SELECT queries are allowed (recommended for security)",
+        ),
+        IntInput(
+            name="max_rows",
+            display_name="Max Rows",
+            value=100,
+            info="Maximum number of rows to return (1-10000)",
+        ),
+        IntInput(
+            name="query_timeout",
+            display_name="Query Timeout (seconds)",
+            value=30,
+            info="Maximum time allowed for query execution (1-300 seconds)",
+        ),
+        # Connection parameters (Advanced)
         StrInput(
             name="database",
             display_name="Database Name",
             required=True,
+            advanced=True,
             info="Name of the Db2 database. Use a Generic-typed global variable or direct input. "
             "Credential-typed variables are not allowed for database names.",
         ),
@@ -38,6 +66,7 @@ class DB2SQLComponent(Component):
             name="hostname",
             display_name="Hostname",
             required=True,
+            advanced=True,
             info="Db2 server hostname or IP address. Use a Generic-typed global variable or direct input.",
         ),
         IntInput(
@@ -45,47 +74,38 @@ class DB2SQLComponent(Component):
             display_name="Port",
             value=50000,
             required=True,
+            advanced=True,
             info="Db2 server port (default: 50000)",
         ),
         StrInput(
             name="username",
             display_name="Username",
             required=True,
+            advanced=True,
             info="Db2 database username. Use a Generic-typed global variable or direct input.",
         ),
         SecretStrInput(
             name="password",
             display_name="Password",
             required=True,
+            advanced=True,
             info="Db2 database password",
         ),
-        HandleInput(
-            name="sql_query",
-            display_name="SQL Query",
-            input_types=["Message", "Text", "Data"],
-            required=False,
-            info="SQL query to execute (SELECT queries recommended for safety)",
-        ),
-        IntInput(
-            name="max_rows",
-            display_name="Max Rows",
-            value=100,
-            info="Maximum number of rows to return (1-10000)",
-            advanced=True,
-        ),
+        # SSL/TLS Settings (Advanced)
         BoolInput(
-            name="read_only_mode",
-            display_name="Read-Only Mode",
+            name="enable_ssl",
+            display_name="Enable SSL/TLS",
             value=True,
             advanced=True,
-            info="If enabled, only SELECT queries are allowed (recommended for security)",
+            info="Enable SSL/TLS encryption for database connection",
+            real_time_refresh=True,
         ),
-        IntInput(
-            name="query_timeout",
-            display_name="Query Timeout (seconds)",
-            value=30,
+        FileInput(
+            name="ssl_certificate_path",
+            display_name="SSL Certificate",
+            file_types=["arm", "pem", "crt"],
             advanced=True,
-            info="Maximum time allowed for query execution (1-300 seconds)",
+            info="Upload SSL certificate file (.arm, .pem, or .crt). Required when SSL is enabled.",
         ),
     ]
 
@@ -172,6 +192,13 @@ class DB2SQLComponent(Component):
                 f"UID={self.username};"
                 f"PWD={self.password};"
             )
+
+            # Add SSL/TLS configuration if enabled
+            if self.enable_ssl:
+                conn_str += "SECURITY=SSL;"
+                if self.ssl_certificate_path:
+                    conn_str += f"SSLServerCertificate={self.ssl_certificate_path};"
+                self.log("SSL/TLS encryption enabled for database connection")
 
             # Connect to Db2
             conn = ibm_db_dbi.connect(conn_str, "", "")

@@ -9,7 +9,7 @@ from lfx.components.ibm.db2_security import (
     validate_port,
 )
 from lfx.helpers.data import docs_to_data
-from lfx.inputs.inputs import BoolInput, DropdownInput, HandleInput, IntInput, SecretStrInput, StrInput
+from lfx.inputs.inputs import BoolInput, DropdownInput, FileInput, HandleInput, IntInput, SecretStrInput, StrInput
 from lfx.io import Output, QueryInput
 from lfx.schema.data import Data
 from lfx.schema.dataframe import DataFrame
@@ -94,6 +94,22 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
             required=True,
             advanced=True,
             info="Db2 database password",
+        ),
+        # SSL/TLS Settings
+        BoolInput(
+            name="enable_ssl",
+            display_name="Enable SSL/TLS",
+            value=True,
+            advanced=True,
+            info="Enable SSL/TLS encryption for database connection",
+            real_time_refresh=True,
+        ),
+        FileInput(
+            name="ssl_certificate_path",
+            display_name="SSL Certificate",
+            file_types=["arm", "pem", "crt"],
+            advanced=True,
+            info="Upload SSL certificate file (.arm, .pem, or .crt). Required when SSL is enabled.",
         ),
         # Advanced Settings
         BoolInput(
@@ -199,6 +215,13 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
             f"UID={self.username};"
             f"PWD={self.password};"
         )
+
+        # Add SSL/TLS configuration if enabled
+        if self.enable_ssl:
+            conn_str += "SECURITY=SSL;"
+            if self.ssl_certificate_path:
+                conn_str += f"SSLServerCertificate={self.ssl_certificate_path};"
+            self.log("SSL/TLS encryption enabled for database connection")
 
         # Create connection with safe error handling
         try:
