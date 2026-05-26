@@ -118,6 +118,16 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
                 "Leave empty to use system default CA certificates (recommended for IBM Cloud DB2)."
             ),
         ),
+        SecretStrInput(
+            name="ssl_certificate_password",
+            display_name="SSL Certificate Password",
+            required=False,
+            advanced=True,
+            info=(
+                "Optional: Password for password-protected SSL certificate/keystore. "
+                "Only required if your certificate file is encrypted with a password."
+            ),
+        ),
         # Advanced Settings
         BoolInput(
             name="should_cache_vector_store",
@@ -311,7 +321,14 @@ class DB2VectorStoreComponent(LCVectorStoreComponent):
             if ssl_cert_path:
                 # Use SSLServerCertificate parameter for DB2
                 conn_str += f"SSLServerCertificate={ssl_cert_path};"
-                self.log("SSL connection configured with custom certificate")
+                
+                # Add certificate password if provided
+                ssl_cert_password = getattr(self, "ssl_certificate_password", None)
+                if ssl_cert_password and ssl_cert_password.strip():
+                    conn_str += f"SSLClientKeystorePassword={ssl_cert_password};"
+                    self.log("SSL connection configured with custom certificate and password")
+                else:
+                    self.log("SSL connection configured with custom certificate (no password)")
             else:
                 self.log("SSL connection configured with system certificates")
 
