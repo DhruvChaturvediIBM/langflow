@@ -8,13 +8,21 @@ from langflow.utils.kb_constants import MAX_CHUNK_OVERLAP, MAX_CHUNK_SIZE, MIN_C
 
 _REQUIRED_BACKEND_CONFIG: dict[str, tuple[str, ...]] = {
     BackendType.OPENSEARCH.value: ("index_name",),
+    # DB2 table_name has a default value in the frontend, so it's not strictly required
+    BackendType.DB2.value: (),
 }
 
 # Backends the API accepts for *new* KB creation. Other ``BackendType``
 # values exist as stubs so existing DB rows referencing them can still
 # be read back, but creating a new KB on a stubbed backend would just
 # fail at ingest time. Reject up front instead.
-_CREATION_ALLOWED_BACKENDS: frozenset[str] = frozenset({BackendType.CHROMA.value, BackendType.OPENSEARCH.value})
+_CREATION_ALLOWED_BACKENDS: frozenset[str] = frozenset(
+    {
+        BackendType.CHROMA.value,
+        BackendType.OPENSEARCH.value,
+        BackendType.DB2.value,
+    }
+)
 
 
 class KnowledgeBaseInfo(BaseModel):

@@ -9,6 +9,7 @@ import {
   type AvailableDBProviderId,
   CHROMA_CLOUD_VARIABLES,
   DB_PROVIDER_OPTIONS,
+  DB2_VARIABLES,
   type DBProviderBooleanField,
   type DBProviderConfigField,
   type DBProviderId,
@@ -483,20 +484,35 @@ function buildBackendConfigPayload(
       cloud_region: literalFields[CHROMA_CLOUD_VARIABLES.REGION] || "us-east-1",
     };
   }
-  if (providerId !== "opensearch") {
-    return {};
+  if (providerId === "opensearch") {
+    return {
+      url_variable: OPENSEARCH_VARIABLES.URL,
+      username_variable: OPENSEARCH_VARIABLES.USERNAME,
+      password_variable: OPENSEARCH_VARIABLES.PASSWORD,
+      index_name: literalFields[OPENSEARCH_VARIABLES.INDEX_NAME] || "",
+      vector_field:
+        literalFields[OPENSEARCH_VARIABLES.VECTOR_FIELD] || "chunk_embedding",
+      text_field: literalFields[OPENSEARCH_VARIABLES.TEXT_FIELD] || "text",
+      use_ssl: booleanFields[OPENSEARCH_VARIABLES.USE_SSL] ?? true,
+      verify_certs: booleanFields[OPENSEARCH_VARIABLES.VERIFY_CERTS] ?? true,
+    };
   }
-  return {
-    url_variable: OPENSEARCH_VARIABLES.URL,
-    username_variable: OPENSEARCH_VARIABLES.USERNAME,
-    password_variable: OPENSEARCH_VARIABLES.PASSWORD,
-    index_name: literalFields[OPENSEARCH_VARIABLES.INDEX_NAME] || "",
-    vector_field:
-      literalFields[OPENSEARCH_VARIABLES.VECTOR_FIELD] || "chunk_embedding",
-    text_field: literalFields[OPENSEARCH_VARIABLES.TEXT_FIELD] || "text",
-    use_ssl: booleanFields[OPENSEARCH_VARIABLES.USE_SSL] ?? true,
-    verify_certs: booleanFields[OPENSEARCH_VARIABLES.VERIFY_CERTS] ?? true,
-  };
+  if (providerId === "db2") {
+    return {
+      database_variable: DB2_VARIABLES.DATABASE,
+      hostname_variable: DB2_VARIABLES.HOSTNAME,
+      port: parseInt(literalFields[DB2_VARIABLES.PORT] || "50000", 10),
+      username_variable: DB2_VARIABLES.USERNAME,
+      password_variable: DB2_VARIABLES.PASSWORD,
+      table_name: literalFields[DB2_VARIABLES.TABLE_NAME] || "LANGFLOW_VECTORS",
+      use_ssl: booleanFields[DB2_VARIABLES.USE_SSL] ?? false,
+      ssl_certificate_variable: DB2_VARIABLES.SSL_CERTIFICATE,
+      ssl_certificate_password_variable: DB2_VARIABLES.SSL_CERTIFICATE_PASSWORD,
+      distance_strategy:
+        literalFields[DB2_VARIABLES.DISTANCE_STRATEGY] || "COSINE",
+    };
+  }
+  return {};
 }
 
 function ProviderListItem({

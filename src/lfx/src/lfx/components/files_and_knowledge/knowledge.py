@@ -134,6 +134,17 @@ _DEFAULT_CHROMA_CLOUD_CONFIG = {
     "api_key_variable": "CHROMA_API_KEY",  # pragma: allowlist secret
 }
 
+_DEFAULT_DB2_CONFIG = {
+    "database_variable": "DB2_DATABASE",
+    "hostname_variable": "DB2_HOSTNAME",
+    "port": 50000,
+    "username_variable": "DB2_USERNAME",
+    "password_variable": "DB2_PASSWORD",  # pragma: allowlist secret
+    "table_name": "LANGFLOW_VECTORS",
+    "use_ssl": False,
+    "distance_strategy": "COSINE",
+}
+
 
 class KnowledgeComponent(Component):
     """One component for both writing into and reading from a Langflow knowledge base.
@@ -852,11 +863,11 @@ class KnowledgeComponent(Component):
             return BackendType.CHROMA.value, {}
 
         if isinstance(value, str):
-            backend_type = value if value == BackendType.OPENSEARCH.value else BackendType.CHROMA.value
-            return (
-                backend_type,
-                _DEFAULT_OPENSEARCH_CONFIG.copy() if backend_type == BackendType.OPENSEARCH.value else {},
-            )
+            if value == BackendType.OPENSEARCH.value:
+                return BackendType.OPENSEARCH.value, _DEFAULT_OPENSEARCH_CONFIG.copy()
+            if value == BackendType.DB2.value:
+                return BackendType.DB2.value, _DEFAULT_DB2_CONFIG.copy()
+            return BackendType.CHROMA.value, {}
 
         if not isinstance(value, dict):
             return BackendType.CHROMA.value, {}
@@ -868,6 +879,12 @@ class KnowledgeComponent(Component):
             if not isinstance(backend_config, dict):
                 backend_config = {}
             return BackendType.OPENSEARCH.value, {**_DEFAULT_OPENSEARCH_CONFIG, **backend_config}
+
+        if backend_type == BackendType.DB2.value:
+            backend_config = value.get("backend_config") or value.get("config") or {}
+            if not isinstance(backend_config, dict):
+                backend_config = {}
+            return BackendType.DB2.value, {**_DEFAULT_DB2_CONFIG, **backend_config}
 
         if backend_type == "chroma_cloud":
             backend_config = value.get("backend_config") or value.get("config") or {}

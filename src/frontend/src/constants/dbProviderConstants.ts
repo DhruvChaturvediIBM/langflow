@@ -26,17 +26,31 @@ export const CHROMA_CLOUD_VARIABLES = {
   REGION: "CHROMA_REGION",
 } as const;
 
+export const DB2_VARIABLES = {
+  DATABASE: "DB2_DATABASE",
+  HOSTNAME: "DB2_HOSTNAME",
+  PORT: "DB2_PORT",
+  USERNAME: "DB2_USERNAME",
+  PASSWORD: "DB2_PASSWORD", // pragma: allowlist secret
+  TABLE_NAME: "DB2_TABLE_NAME",
+  USE_SSL: "DB2_USE_SSL",
+  SSL_CERTIFICATE: "DB2_SSL_CERTIFICATE",
+  SSL_CERTIFICATE_PASSWORD: "DB2_SSL_CERTIFICATE_PASSWORD", // pragma: allowlist secret
+  DISTANCE_STRATEGY: "DB2_DISTANCE_STRATEGY",
+} as const;
+
 export type DBProviderId =
   | "chroma"
   | "chroma_cloud"
   | "opensearch"
+  | "db2"
   | "astra"
   | "mongodb"
   | "postgres";
 
 export type AvailableDBProviderId = Extract<
   DBProviderId,
-  "chroma" | "chroma_cloud" | "opensearch"
+  "chroma" | "chroma_cloud" | "opensearch" | "db2"
 >;
 
 export interface DBProviderTextField {
@@ -199,6 +213,89 @@ export const DB_PROVIDER_OPTIONS: DBProviderOption[] = [
     ],
   },
   {
+    id: "db2",
+    label: "IBM Db2",
+    description: "IBM Db2 Vector Store with vector search capabilities.",
+    icon: "Database",
+    status: "available",
+    configFields: [
+      {
+        label: "Database Name",
+        variableKey: DB2_VARIABLES.DATABASE,
+        required: true,
+        isSecret: false,
+        placeholder: "SAMPLE",
+      },
+      {
+        label: "Hostname",
+        variableKey: DB2_VARIABLES.HOSTNAME,
+        required: true,
+        isSecret: false,
+        placeholder: "localhost",
+      },
+      {
+        label: "Port",
+        variableKey: DB2_VARIABLES.PORT,
+        required: false,
+        isSecret: false,
+        placeholder: "50000",
+        defaultValue: "50000",
+      },
+      {
+        label: "Username",
+        variableKey: DB2_VARIABLES.USERNAME,
+        required: true,
+        isSecret: false,
+        placeholder: "db2inst1",
+      },
+      {
+        label: "Password",
+        variableKey: DB2_VARIABLES.PASSWORD,
+        required: true,
+        isSecret: true,
+        placeholder: "Enter Db2 password",
+      },
+      {
+        label: "Table Name",
+        variableKey: DB2_VARIABLES.TABLE_NAME,
+        required: false,
+        isSecret: false,
+        placeholder: "LANGFLOW_VECTORS",
+        defaultValue: "LANGFLOW_VECTORS",
+      },
+      {
+        kind: "boolean",
+        label: "Use SSL/TLS",
+        variableKey: DB2_VARIABLES.USE_SSL,
+        helperText:
+          "Enable SSL/TLS encryption for database connection. Recommended for production.",
+        defaultValue: false,
+      },
+      {
+        label: "SSL Certificate Path",
+        variableKey: DB2_VARIABLES.SSL_CERTIFICATE,
+        required: false,
+        isSecret: false,
+        placeholder: "/path/to/certificate.crt",
+      },
+      {
+        label: "SSL Certificate Password",
+        variableKey: DB2_VARIABLES.SSL_CERTIFICATE_PASSWORD,
+        required: false,
+        isSecret: true,
+        placeholder: "Enter certificate password (if required)",
+      },
+      {
+        label: "Distance Strategy",
+        variableKey: DB2_VARIABLES.DISTANCE_STRATEGY,
+        required: false,
+        isSecret: false,
+        placeholder: "COSINE",
+        defaultValue: "COSINE",
+      },
+    ],
+  },
+  {
     id: "astra",
     label: "Astra DB",
     description: "Managed Cassandra vector storage.",
@@ -272,6 +369,7 @@ export function getActiveDBProvider(
   );
   if (configuredProvider === "opensearch") return "opensearch";
   if (configuredProvider === "chroma_cloud") return "chroma_cloud";
+  if (configuredProvider === "db2") return "db2";
   return "chroma";
 }
 
@@ -302,36 +400,57 @@ export function getDBProviderConfig(
     };
   }
 
-  if (providerType !== "opensearch") {
-    return {};
+  if (providerType === "opensearch") {
+    return {
+      url_variable: OPENSEARCH_VARIABLES.URL,
+      username_variable: OPENSEARCH_VARIABLES.USERNAME,
+      password_variable: OPENSEARCH_VARIABLES.PASSWORD,
+      index_name:
+        getGlobalVariableValue(variables, OPENSEARCH_VARIABLES.INDEX_NAME) ??
+        "",
+      vector_field:
+        getGlobalVariableValue(variables, OPENSEARCH_VARIABLES.VECTOR_FIELD) ??
+        "chunk_embedding",
+      text_field:
+        getGlobalVariableValue(variables, OPENSEARCH_VARIABLES.TEXT_FIELD) ??
+        "text",
+      use_ssl: parseBooleanGlobalVariable(
+        variables,
+        OPENSEARCH_VARIABLES.USE_SSL,
+        true,
+      ),
+      verify_certs: parseBooleanGlobalVariable(
+        variables,
+        OPENSEARCH_VARIABLES.VERIFY_CERTS,
+        true,
+      ),
+    };
   }
 
-  return {
-    url_variable: OPENSEARCH_VARIABLES.URL,
-    username_variable: OPENSEARCH_VARIABLES.USERNAME,
-    password_variable: OPENSEARCH_VARIABLES.PASSWORD,
-    index_name:
-      getGlobalVariableValue(variables, OPENSEARCH_VARIABLES.INDEX_NAME) ?? "",
-    vector_field:
-      getGlobalVariableValue(variables, OPENSEARCH_VARIABLES.VECTOR_FIELD) ??
-      "chunk_embedding",
-    text_field:
-      getGlobalVariableValue(variables, OPENSEARCH_VARIABLES.TEXT_FIELD) ??
-      "text",
-    // Resolve booleans on the client so the backend always sees real
-    // ``bool`` values; otherwise ``bool("false")`` evaluates to ``True``
-    // in Python and silently flips the toggle.
-    use_ssl: parseBooleanGlobalVariable(
-      variables,
-      OPENSEARCH_VARIABLES.USE_SSL,
-      true,
-    ),
-    verify_certs: parseBooleanGlobalVariable(
-      variables,
-      OPENSEARCH_VARIABLES.VERIFY_CERTS,
-      true,
-    ),
-  };
+  if (providerType === "db2") {
+    return {
+      database_variable: DB2_VARIABLES.DATABASE,
+      hostname_variable: DB2_VARIABLES.HOSTNAME,
+      port: getGlobalVariableValue(variables, DB2_VARIABLES.PORT) ?? "50000",
+      username_variable: DB2_VARIABLES.USERNAME,
+      password_variable: DB2_VARIABLES.PASSWORD,
+      table_name:
+        getGlobalVariableValue(variables, DB2_VARIABLES.TABLE_NAME) ??
+        "LANGFLOW_VECTORS",
+      use_ssl: parseBooleanGlobalVariable(
+        variables,
+        DB2_VARIABLES.USE_SSL,
+        false,
+      ),
+      ssl_certificate_variable: DB2_VARIABLES.SSL_CERTIFICATE,
+      ssl_certificate_password_variable: DB2_VARIABLES.SSL_CERTIFICATE_PASSWORD,
+      distance_strategy:
+        getGlobalVariableValue(variables, DB2_VARIABLES.DISTANCE_STRATEGY) ??
+        "COSINE",
+    };
+  }
+
+  return {};
 }
 
 /**
@@ -354,6 +473,7 @@ export function resolveUIBackendType(
   backendConfig: Record<string, unknown> | undefined,
 ): AvailableDBProviderId {
   if (backendType === "opensearch") return "opensearch";
+  if (backendType === "db2") return "db2";
   // Already a frontend UI ID — pass through directly.
   if (backendType === "chroma_cloud") return "chroma_cloud";
   // Server always stores "chroma" for both modes; mode discriminates.

@@ -40,6 +40,7 @@ from lfx.base.knowledge_bases.backends.chroma import (
     ChromaCloudBackend,
     ChromaLocalBackend,
 )
+from lfx.base.knowledge_bases.backends.db2 import DB2Backend
 from lfx.base.knowledge_bases.backends.mongodb import MongoDBBackend
 from lfx.base.knowledge_bases.backends.opensearch import OpenSearchBackend
 from lfx.base.knowledge_bases.backends.postgres import PostgresBackend
@@ -58,6 +59,7 @@ from lfx.base.knowledge_bases.backends.registry import (
 # to the correct class based on backend_config["mode"] at call time.
 register_backend(BackendType.CHROMA, ChromaLocalBackend)
 register_backend(BackendType.OPENSEARCH, OpenSearchBackend)
+register_backend(BackendType.DB2, DB2Backend)
 
 __all__ = [
     "AstraBackend",
@@ -66,6 +68,7 @@ __all__ = [
     "ChromaBackend",
     "ChromaCloudBackend",
     "ChromaLocalBackend",
+    "DB2Backend",
     "IngestedDocument",
     "MongoDBBackend",
     "OpenSearchBackend",
